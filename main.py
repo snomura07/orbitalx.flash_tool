@@ -65,15 +65,16 @@ class SerialReaderThread(QThread):
         self.running = True
 
     def run(self):
+        pattern = re.compile(r"^\[adc\]@([\d.,-]+)$")  # ✅ 可変長データ対応
         while self.running:
             if self.ser and self.ser.is_open:
                 try:
                     data = self.ser.readline().decode('utf-8', errors='ignore').strip()
                     if data:
                         self.data_received.emit(f"[{self.timestamp()}] {data}")
-                        match = re.match(r'\[adc\]@([\d.-]+),([\d.-]+),([\d.-]+),([\d.-]+),([\d.-]+)', data)
+                        match = pattern.match(data)
                         if match:
-                            values = [float(match.group(i)) for i in range(1, 6)]  # 5つの数値をリスト化
+                            values = list(map(float, match.group(1).split(",")))  # ✅ 可変長リストを作成
                             self.graph_data_received.emit(values)
 
                 except Exception as e:
@@ -91,11 +92,10 @@ class GraphWidget(QWidget):
     def __init__(self):
         super().__init__()
 
-        self.data = [[] for _ in range(5)]  # 5本のグラフデータ
+        self.data = []  # ✅ データ数を可変にするため空リストに
         self.times = []
         self.max_points = 500  # 最大保持データ数
 
-        # ✅ Y軸の初期値
         self.y_min = 0
         self.y_max = 4096
 
@@ -106,23 +106,21 @@ class GraphWidget(QWidget):
         self.y_min_spinbox = QSpinBox()
         self.y_min_spinbox.setRange(0, 4096)
         self.y_min_spinbox.setValue(self.y_min)
-        self.y_min_spinbox.setFixedWidth(80)  # ✅ 幅を固定
+        self.y_min_spinbox.setFixedWidth(80)
         self.y_min_spinbox.valueChanged.connect(self.update_y_limits)
 
         self.y_max_spinbox = QSpinBox()
         self.y_max_spinbox.setRange(0, 4096)
         self.y_max_spinbox.setValue(self.y_max)
-        self.y_max_spinbox.setFixedWidth(80)  # ✅ 幅を固定
+        self.y_max_spinbox.setFixedWidth(80)
         self.y_max_spinbox.valueChanged.connect(self.update_y_limits)
 
-        # ✅ ラベルとスピンボックスをきれいに整列
         control_layout = QFormLayout()
         control_layout.addRow("Y min:", self.y_min_spinbox)
         control_layout.addRow("Y max:", self.y_max_spinbox)
 
-        # ✅ 既存のレイアウトに組み込む
         layout = QVBoxLayout()
-        layout.addLayout(control_layout)  # ✅ 追加
+        layout.addLayout(control_layout)
         layout.addWidget(self.canvas)
         self.setLayout(layout)
 
@@ -130,30 +128,33 @@ class GraphWidget(QWidget):
         self.timer.timeout.connect(self.update_plot)
         self.timer.start(100)
 
-    def add_data(self, values):
-        """ シリアル通信データを受け取り、グラフに追加 """
-        self.times.append(datetime.now().strftime("%H:%M:%S"))
-        for i in range(5):
-            self.data[i].append(values[i])
-
-        # ✅ 移動窓方式：500データを超えたら古いデータを削除
-        if len(self.times) > self.max_points:
-            self.times.pop(0)
-            for i in range(5):
-                self.data[i].pop(0)
-
     def update_y_limits(self):
         """ Y 軸の最小・最大をスピンボックスの値に合わせて更新 """
         self.y_min = self.y_min_spinbox.value()
         self.y_max = self.y_max_spinbox.value()
         self.update_plot()
 
+    def add_data(self, values):
+        """ 可変長データを受け取り、グラフに追加 """
+        if not self.data or len(self.data) != len(values):
+            self.data = [[] for _ in range(len(values))]  # ✅ データ数に応じてリストを作成
+
+        self.times.append(datetime.now().strftime("%H:%M:%S"))
+        for i, val in enumerate(values):
+            self.data[i].append(val)
+
+        # ✅ 移動窓方式：データが max_points を超えたら古いデータを削除
+        if len(self.times) > self.max_points:
+            self.times.pop(0)
+            for d in self.data:
+                d.pop(0)
+
     def update_plot(self):
-        """ グラフの描画を最適化して、移動窓を実現 """
-        if not self.times:
+        """ グラフの描画を更新 """
+        if not self.times or not self.data:
             return
 
-        x_data = list(range(len(self.times)))  # X 軸をインデックスに変更
+        x_data = list(range(len(self.times)))
 
         self.ax.clear()
         self.ax.grid(True, linestyle="--", linewidth=0.5)
@@ -167,22 +168,19 @@ class GraphWidget(QWidget):
         self.ax.set_xticks(x_data[::tick_step])
         self.ax.set_xticklabels(self.times[::tick_step], rotation=45, ha="right")
 
-        colors = ["red", "blue", "green", "purple", "orange"]
-        labels = [f"Value {i+1}" for i in range(5)]
+        colors = ["red", "blue", "green", "purple", "orange", "cyan", "magenta", "yellow"]
+        labels = [f"Value {i+1}" for i in range(len(self.data))]
 
-        for i in range(5):
-            self.ax.plot(x_data[-self.max_points:], self.data[i][-self.max_points:], label=labels[i], color=colors[i])
+        for i in range(len(self.data)):
+            color = colors[i % len(colors)]  # ✅ 色を繰り返し使用
+            self.ax.plot(x_data[-self.max_points:], self.data[i][-self.max_points:], label=labels[i], color=color)
 
         self.ax.set_title("ADC Values Over Time")
         self.ax.set_xlabel("Time")
         self.ax.set_ylabel("ADC Values")
-
-        # ✅ スピンボックスの値を Y 軸に適用
         self.ax.set_ylim(self.y_min, self.y_max)
 
-        # ✅ 凡例（線種ラベル）をグラフの外に移動
         self.ax.legend(loc="upper left", bbox_to_anchor=(1, 1))
-
         self.canvas.draw()
 
 
@@ -279,10 +277,16 @@ class STM32Flasher(QWidget):
     def disconnect_serial(self):
         if self.reader_thread:
             self.reader_thread.stop()
+            self.reader_thread.wait()  # ✅ スレッドが確実に終了するのを待つ
             self.reader_thread = None
+
         if self.ser and self.ser.is_open:
             self.ser.close()
             self.ser = None
+
+        # ✅ UI の更新
+        self.connect_btn.setText('接続')
+        self.status_label.setPixmap(self.red_icon)
 
     def select_file(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "ファームウェアを選択", "", "ELF Files (*.elf)")
