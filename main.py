@@ -266,13 +266,16 @@ class STM32Flasher(QWidget):
             self.ser = serial.Serial(port, 115200, timeout=1)
             self.connect_btn.setText('切断')
             self.status_label.setPixmap(self.green_icon)
+
+            # ✅ 接続メッセージを赤字で表示
+            self.log_system(f"{port} に接続しました")
+
             self.reader_thread = SerialReaderThread(self.ser)
             self.reader_thread.data_received.connect(self.log)
-            self.reader_thread.graph_data_received.connect(self.graph_widget.add_data)
+            self.reader_thread.graph_data_received.connect(self.graph_widget.add_data)  # ✅ 追加
             self.reader_thread.start()
-
         except Exception as e:
-            self.log(f"接続エラー: {e}")
+            self.log_system(f"接続エラー: {e}")
 
     def disconnect_serial(self):
         if self.reader_thread:
@@ -284,9 +287,11 @@ class STM32Flasher(QWidget):
             self.ser.close()
             self.ser = None
 
-        # ✅ UI の更新
         self.connect_btn.setText('接続')
         self.status_label.setPixmap(self.red_icon)
+
+        # ✅ 切断メッセージを赤字で表示
+        self.log_system("シリアル接続を切断しました")
 
     def select_file(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "ファームウェアを選択", "", "ELF Files (*.elf)")
@@ -301,6 +306,11 @@ class STM32Flasher(QWidget):
 
     def log(self, message):
         self.log_area.append(f'<span style="color: black;">{message}</span>')
+
+    def log_system(self, message):
+        """ システムメッセージを赤字でログに表示 """
+        timestamp = datetime.now().strftime("%Y/%m/%d %H:%M:%S.%f")[:-3]
+        self.log_area.append(f'<span style="color: red;"><b>[{timestamp}] {message}</b></span>')
 
     def clear_log(self):
         self.log_area.clear()
