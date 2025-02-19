@@ -2,9 +2,15 @@ import sys
 import serial
 import subprocess
 import configparser
+import re
+import matplotlib
+matplotlib.use("QtAgg")
+# PyQt6 用のバックエンド
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+import matplotlib.pyplot as plt
 from datetime import datetime
-from PyQt6.QtWidgets import QApplication, QWidget, QPushButton, QLabel, QVBoxLayout, QFileDialog, QTextEdit, QComboBox, QHBoxLayout, QSizePolicy
-from PyQt6.QtCore import QThread, pyqtSignal, Qt
+from PyQt6.QtWidgets import QApplication, QWidget, QPushButton, QLabel, QVBoxLayout, QTabWidget, QTextEdit, QComboBox, QHBoxLayout, QSizePolicy, QFileDialog, QSpinBox, QFormLayout
+from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTimer
 from PyQt6.QtGui import QPixmap
 
 CONFIG_FILE = "config.ini"
@@ -25,7 +31,6 @@ class FlashThread(QThread):
         ]
         self.log_signal.emit(f"[{self.timestamp()}] フラッシュ開始: {self.file_path}")
 
-        # ✅ CMDウィンドウを開かないように設定
         startupinfo = None
         if sys.platform == "win32":
             startupinfo = subprocess.STARTUPINFO()
@@ -37,7 +42,7 @@ class FlashThread(QThread):
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
-            startupinfo=startupinfo  # ✅ ここで CMD を非表示にする
+            startupinfo=startupinfo
         )
 
         for line in iter(process.stdout.readline, ''):
@@ -48,11 +53,11 @@ class FlashThread(QThread):
         self.log_signal.emit(f"[{self.timestamp()}] フラッシュ完了")
 
     def timestamp(self):
-        return datetime.now().strftime("%Y/%m/%d %H:%M:%S.%f")[:-3]  # ミリ秒付き
-
+        return datetime.now().strftime("%Y/%m/%d %H:%M:%S.%f")[:-3]
 
 class SerialReaderThread(QThread):
     data_received = pyqtSignal(str)
+    graph_data_received = pyqtSignal(list)
 
     def __init__(self, ser):
         super().__init__()
@@ -60,16 +65,20 @@ class SerialReaderThread(QThread):
         self.running = True
 
     def run(self):
+        pattern = re.compile(r"^\[adc\]@([\d.,-]+)$")  # ✅ 可変長データ対応
         while self.running:
             if self.ser and self.ser.is_open:
                 try:
                     data = self.ser.readline().decode('utf-8', errors='ignore').strip()
                     if data:
                         self.data_received.emit(f"[{self.timestamp()}] {data}")
+                        match = pattern.match(data)
+                        if match:
+                            values = list(map(float, match.group(1).split(",")))  # ✅ 可変長リストを作成
+                            self.graph_data_received.emit(values)
+
                 except Exception as e:
                     self.data_received.emit(f"[{self.timestamp()}] Error: {e}")
-            else:
-                break
 
     def stop(self):
         self.running = False
@@ -77,6 +86,102 @@ class SerialReaderThread(QThread):
 
     def timestamp(self):
         return datetime.now().strftime("%Y/%m/%d %H:%M:%S.%f")[:-3]
+
+
+class GraphWidget(QWidget):
+    def __init__(self):
+        super().__init__()
+
+        self.data = []  # ✅ データ数を可変にするため空リストに
+        self.times = []
+        self.max_points = 500  # 最大保持データ数
+
+        self.y_min = 0
+        self.y_max = 4096
+
+        self.fig, self.ax = plt.subplots()
+        self.canvas = FigureCanvas(self.fig)
+
+        # ✅ Y軸調整スピンボックス（間隔を統一）
+        self.y_min_spinbox = QSpinBox()
+        self.y_min_spinbox.setRange(0, 4096)
+        self.y_min_spinbox.setValue(self.y_min)
+        self.y_min_spinbox.setFixedWidth(80)
+        self.y_min_spinbox.valueChanged.connect(self.update_y_limits)
+
+        self.y_max_spinbox = QSpinBox()
+        self.y_max_spinbox.setRange(0, 4096)
+        self.y_max_spinbox.setValue(self.y_max)
+        self.y_max_spinbox.setFixedWidth(80)
+        self.y_max_spinbox.valueChanged.connect(self.update_y_limits)
+
+        control_layout = QFormLayout()
+        control_layout.addRow("Y min:", self.y_min_spinbox)
+        control_layout.addRow("Y max:", self.y_max_spinbox)
+
+        layout = QVBoxLayout()
+        layout.addLayout(control_layout)
+        layout.addWidget(self.canvas)
+        self.setLayout(layout)
+
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_plot)
+        self.timer.start(100)
+
+    def update_y_limits(self):
+        """ Y 軸の最小・最大をスピンボックスの値に合わせて更新 """
+        self.y_min = self.y_min_spinbox.value()
+        self.y_max = self.y_max_spinbox.value()
+        self.update_plot()
+
+    def add_data(self, values):
+        """ 可変長データを受け取り、グラフに追加 """
+        if not self.data or len(self.data) != len(values):
+            self.data = [[] for _ in range(len(values))]  # ✅ データ数に応じてリストを作成
+
+        self.times.append(datetime.now().strftime("%H:%M:%S"))
+        for i, val in enumerate(values):
+            self.data[i].append(val)
+
+        # ✅ 移動窓方式：データが max_points を超えたら古いデータを削除
+        if len(self.times) > self.max_points:
+            self.times.pop(0)
+            for d in self.data:
+                d.pop(0)
+
+    def update_plot(self):
+        """ グラフの描画を更新 """
+        if not self.times or not self.data:
+            return
+
+        x_data = list(range(len(self.times)))
+
+        self.ax.clear()
+        self.ax.grid(True, linestyle="--", linewidth=0.5)
+
+        if len(self.times) <= self.max_points:
+            self.ax.set_xlim(0, self.max_points)
+        else:
+            self.ax.set_xlim(len(self.times) - self.max_points, len(self.times))
+
+        tick_step = max(1, len(self.times) // 10)
+        self.ax.set_xticks(x_data[::tick_step])
+        self.ax.set_xticklabels(self.times[::tick_step], rotation=45, ha="right")
+
+        colors = ["red", "blue", "green", "purple", "orange", "cyan", "magenta", "yellow"]
+        labels = [f"Value {i+1}" for i in range(len(self.data))]
+
+        for i in range(len(self.data)):
+            color = colors[i % len(colors)]  # ✅ 色を繰り返し使用
+            self.ax.plot(x_data[-self.max_points:], self.data[i][-self.max_points:], label=labels[i], color=color)
+
+        self.ax.set_title("ADC Values Over Time")
+        self.ax.set_xlabel("Time")
+        self.ax.set_ylabel("ADC Values")
+        self.ax.set_ylim(self.y_min, self.y_max)
+
+        self.ax.legend(loc="upper left", bbox_to_anchor=(1, 1))
+        self.canvas.draw()
 
 
 class STM32Flasher(QWidget):
@@ -89,7 +194,7 @@ class STM32Flasher(QWidget):
         self.ser = None
         self.reader_thread = None
         self.flash_thread = None
-        self.selected_file = self.config.get("Settings", "flash_file", fallback="")  # 設定ファイルから取得
+        self.selected_file = self.config.get("Settings", "flash_file", fallback="")
 
         self.red_icon = QPixmap(20, 20)
         self.red_icon.fill(Qt.GlobalColor.red)
@@ -106,13 +211,6 @@ class STM32Flasher(QWidget):
         self.port_select = QComboBox()
         self.port_select.addItems(['COM4', 'COM5', 'COM6'])
         self.port_select.setEditable(True)
-        self.port_select.lineEdit().setAlignment(Qt.AlignmentFlag.AlignLeft)
-        self.port_select.setSizePolicy(QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed))
-
-        # ✅ 設定ファイルのCOMポートを適用
-        default_port = self.config.get("Settings", "com_port", fallback="COM4")
-        if default_port in [self.port_select.itemText(i) for i in range(self.port_select.count())]:
-            self.port_select.setCurrentText(default_port)
 
         self.status_label = QLabel()
         self.status_label.setPixmap(self.red_icon)
@@ -130,6 +228,12 @@ class STM32Flasher(QWidget):
         self.log_area = QTextEdit()
         self.log_area.setReadOnly(True)
 
+        self.graph_widget = GraphWidget()
+
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self.log_area, "シリアルログ")
+        self.tabs.addTab(self.graph_widget, "グラフ")
+
         self.clear_log_btn = QPushButton('ログクリア')
         self.clear_log_btn.clicked.connect(self.clear_log)
 
@@ -145,8 +249,7 @@ class STM32Flasher(QWidget):
         layout.addWidget(self.file_label)
         layout.addWidget(self.file_select_btn)
         layout.addWidget(self.flash_btn)
-        layout.addWidget(QLabel('シリアル通信ログ:'))
-        layout.addWidget(self.log_area)
+        layout.addWidget(self.tabs)
         layout.addWidget(self.clear_log_btn)
 
         self.setLayout(layout)
@@ -163,10 +266,13 @@ class STM32Flasher(QWidget):
             self.ser = serial.Serial(port, 115200, timeout=1)
             self.connect_btn.setText('切断')
             self.status_label.setPixmap(self.green_icon)
+
+            # ✅ 接続メッセージを赤字で表示
             self.log_system(f"{port} に接続しました")
 
             self.reader_thread = SerialReaderThread(self.ser)
             self.reader_thread.data_received.connect(self.log)
+            self.reader_thread.graph_data_received.connect(self.graph_widget.add_data)  # ✅ 追加
             self.reader_thread.start()
         except Exception as e:
             self.log_system(f"接続エラー: {e}")
@@ -174,6 +280,7 @@ class STM32Flasher(QWidget):
     def disconnect_serial(self):
         if self.reader_thread:
             self.reader_thread.stop()
+            self.reader_thread.wait()  # ✅ スレッドが確実に終了するのを待つ
             self.reader_thread = None
 
         if self.ser and self.ser.is_open:
@@ -182,6 +289,8 @@ class STM32Flasher(QWidget):
 
         self.connect_btn.setText('接続')
         self.status_label.setPixmap(self.red_icon)
+
+        # ✅ 切断メッセージを赤字で表示
         self.log_system("シリアル接続を切断しました")
 
     def select_file(self):
@@ -189,21 +298,8 @@ class STM32Flasher(QWidget):
         if file_path:
             self.selected_file = file_path
             self.file_label.setText(f"選択: {file_path}")
-            self.save_config("flash_file", file_path)
-
-    def save_config(self, key, value):
-        """ 設定ファイルに値を保存 """
-        self.config.set("Settings", key, value)
-        with open(CONFIG_FILE, "w") as configfile:
-            self.config.write(configfile)
 
     def flash_firmware(self):
-        if not self.selected_file:
-            self.log_system("ファイルが選択されていません")
-            return
-
-        self.disconnect_serial()
-
         self.flash_thread = FlashThread(self.port_select.currentText(), self.selected_file)
         self.flash_thread.log_signal.connect(self.log)
         self.flash_thread.start()
@@ -212,6 +308,7 @@ class STM32Flasher(QWidget):
         self.log_area.append(f'<span style="color: black;">{message}</span>')
 
     def log_system(self, message):
+        """ システムメッセージを赤字でログに表示 """
         timestamp = datetime.now().strftime("%Y/%m/%d %H:%M:%S.%f")[:-3]
         self.log_area.append(f'<span style="color: red;"><b>[{timestamp}] {message}</b></span>')
 
