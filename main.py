@@ -9,7 +9,7 @@ matplotlib.use("QtAgg")
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 import matplotlib.pyplot as plt
 from datetime import datetime
-from PyQt6.QtWidgets import QApplication, QWidget, QPushButton, QLabel, QVBoxLayout, QTabWidget, QTextEdit, QComboBox, QHBoxLayout, QSizePolicy, QFileDialog
+from PyQt6.QtWidgets import QApplication, QWidget, QPushButton, QLabel, QVBoxLayout, QTabWidget, QTextEdit, QComboBox, QHBoxLayout, QSizePolicy, QFileDialog, QSpinBox, QFormLayout
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTimer
 from PyQt6.QtGui import QPixmap
 
@@ -86,82 +86,104 @@ class SerialReaderThread(QThread):
     def timestamp(self):
         return datetime.now().strftime("%Y/%m/%d %H:%M:%S.%f")[:-3]
 
+
 class GraphWidget(QWidget):
     def __init__(self):
         super().__init__()
 
         self.data = [[] for _ in range(5)]  # 5本のグラフデータ
         self.times = []
+        self.max_points = 500  # 最大保持データ数
 
-        self.max_points = 500  # ✅ 500データ（約5秒分）を保持
+        # ✅ Y軸の初期値
+        self.y_min = 0
+        self.y_max = 4096
+
         self.fig, self.ax = plt.subplots()
         self.canvas = FigureCanvas(self.fig)
+
+        # ✅ Y軸調整スピンボックス（間隔を統一）
+        self.y_min_spinbox = QSpinBox()
+        self.y_min_spinbox.setRange(0, 4096)
+        self.y_min_spinbox.setValue(self.y_min)
+        self.y_min_spinbox.setFixedWidth(80)  # ✅ 幅を固定
+        self.y_min_spinbox.valueChanged.connect(self.update_y_limits)
+
+        self.y_max_spinbox = QSpinBox()
+        self.y_max_spinbox.setRange(0, 4096)
+        self.y_max_spinbox.setValue(self.y_max)
+        self.y_max_spinbox.setFixedWidth(80)  # ✅ 幅を固定
+        self.y_max_spinbox.valueChanged.connect(self.update_y_limits)
+
+        # ✅ ラベルとスピンボックスをきれいに整列
+        control_layout = QFormLayout()
+        control_layout.addRow("Y min:", self.y_min_spinbox)
+        control_layout.addRow("Y max:", self.y_max_spinbox)
+
+        # ✅ 既存のレイアウトに組み込む
         layout = QVBoxLayout()
+        layout.addLayout(control_layout)  # ✅ 追加
         layout.addWidget(self.canvas)
         self.setLayout(layout)
 
-        colors = ["red", "blue", "green", "purple", "orange"]
-        labels = [f"Value {i+1}" for i in range(5)]
-        self.lines = [self.ax.plot([], [], label=labels[i], color=colors[i])[0] for i in range(5)]  # ✅ 事前に Line2D オブジェクトを作成
-
-        self.ax.legend()
-        self.ax.set_title("ADC Values Over Time")
-        self.ax.set_xlabel("Time")
-        self.ax.set_ylabel("ADC Values")
-        self.ax.set_ylim(0, 4096)  # ✅ Y軸を0～4096に固定
-        self.ax.grid(True, linestyle="--", linewidth=0.5)  # ✅ 点線グリッド
-
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_plot)
-        self.timer.start(100)  # ✅ 100msごとにグラフを更新
+        self.timer.start(100)
 
     def add_data(self, values):
-        """ 新しいデータを追加し、最大値を超えたら古いデータを削除（移動窓方式） """
-        self.times.append(datetime.now().strftime("%H:%M:%S.%f")[:-4])  # ミリ秒付き
+        """ シリアル通信データを受け取り、グラフに追加 """
+        self.times.append(datetime.now().strftime("%H:%M:%S"))
         for i in range(5):
             self.data[i].append(values[i])
 
-        # ✅ 500個を超えたら古いデータを削除
+        # ✅ 移動窓方式：500データを超えたら古いデータを削除
         if len(self.times) > self.max_points:
             self.times.pop(0)
             for i in range(5):
                 self.data[i].pop(0)
+
+    def update_y_limits(self):
+        """ Y 軸の最小・最大をスピンボックスの値に合わせて更新 """
+        self.y_min = self.y_min_spinbox.value()
+        self.y_max = self.y_max_spinbox.value()
+        self.update_plot()
 
     def update_plot(self):
         """ グラフの描画を最適化して、移動窓を実現 """
         if not self.times:
             return
 
-        x_data = range(len(self.times))  # ✅ X 軸をインデックスに変更
+        x_data = list(range(len(self.times)))  # X 軸をインデックスに変更
 
-        self.ax.clear()  # ✅ 過去のデータを完全に消去
-        self.ax.grid(True, linestyle="--", linewidth=0.5)  # ✅ 再描画時にグリッドもセットし直す
+        self.ax.clear()
+        self.ax.grid(True, linestyle="--", linewidth=0.5)
 
-        # ✅ 最新の500データのみ表示（X 軸の範囲を動的に更新）
-        if len(self.times) == 1:
-            self.ax.set_xlim(0, 1)  # ✅ 1つしかない場合は 0~1 に固定
+        if len(self.times) <= self.max_points:
+            self.ax.set_xlim(0, self.max_points)
         else:
-            self.ax.set_xlim(x_data[0], x_data[-1])  # ✅ X 軸を最新データに合わせる
+            self.ax.set_xlim(len(self.times) - self.max_points, len(self.times))
 
-        # ✅ X軸の目盛りを適度に間引く（最大10個くらい）
         tick_step = max(1, len(self.times) // 10)
         self.ax.set_xticks(x_data[::tick_step])
         self.ax.set_xticklabels(self.times[::tick_step], rotation=45, ha="right")
 
-        # ✅ 各ラインをプロットし直す（古い描画を完全リセット）
         colors = ["red", "blue", "green", "purple", "orange"]
         labels = [f"Value {i+1}" for i in range(5)]
-        for i in range(5):
-            self.ax.plot(x_data, self.data[i], label=labels[i], color=colors[i])  # ✅ 都度新しくプロットする
 
-        self.ax.legend()
+        for i in range(5):
+            self.ax.plot(x_data[-self.max_points:], self.data[i][-self.max_points:], label=labels[i], color=colors[i])
+
         self.ax.set_title("ADC Values Over Time")
         self.ax.set_xlabel("Time")
         self.ax.set_ylabel("ADC Values")
-        self.ax.set_ylim(0, 4096)  # ✅ Y 軸は固定
+
+        # ✅ スピンボックスの値を Y 軸に適用
+        self.ax.set_ylim(self.y_min, self.y_max)
+
+        # ✅ 凡例（線種ラベル）をグラフの外に移動
+        self.ax.legend(loc="upper left", bbox_to_anchor=(1, 1))
 
         self.canvas.draw()
-
 
 
 class STM32Flasher(QWidget):
