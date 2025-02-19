@@ -9,6 +9,8 @@ COMポートがバインドできない都合で、powershell上から実行す�
 ```
 pip3 install --no-cache-dir PyQt6==6.7.0
 pip3 install pyinstaller
+pip3 install pyserial
+pip3 install matplotlib
 ```
 
 ## STM32
