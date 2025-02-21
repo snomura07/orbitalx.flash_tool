@@ -97,20 +97,20 @@ class GraphWidget(QWidget):
         self.max_points = 500  # 最大保持データ数
 
         self.y_min = 0
-        self.y_max = 4096
+        self.y_max = 5000
 
         self.fig, self.ax = plt.subplots()
         self.canvas = FigureCanvas(self.fig)
 
         # ✅ Y軸調整スピンボックス（間隔を統一）
         self.y_min_spinbox = QSpinBox()
-        self.y_min_spinbox.setRange(0, 4096)
+        self.y_min_spinbox.setRange(-99999, 99999)
         self.y_min_spinbox.setValue(self.y_min)
         self.y_min_spinbox.setFixedWidth(80)
         self.y_min_spinbox.valueChanged.connect(self.update_y_limits)
 
         self.y_max_spinbox = QSpinBox()
-        self.y_max_spinbox.setRange(0, 4096)
+        self.y_max_spinbox.setRange(-99999, 99999)
         self.y_max_spinbox.setValue(self.y_max)
         self.y_max_spinbox.setFixedWidth(80)
         self.y_max_spinbox.valueChanged.connect(self.update_y_limits)
