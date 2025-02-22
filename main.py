@@ -305,7 +305,13 @@ class STM32Flasher(QWidget):
         self.flash_thread.start()
 
     def log(self, message):
-        self.log_area.append(f'<span style="color: black;">{message}</span>')
+        if "Error" in message:
+            color = "red"
+        elif "complete" in message:
+            color = "blue"
+        else:
+            color = "black"
+        self.log_area.append(f'<span style="color: {color};">{message}</span>')
 
     def log_system(self, message):
         """ システムメッセージを赤字でログに表示 """
