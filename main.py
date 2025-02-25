@@ -9,7 +9,7 @@ matplotlib.use("QtAgg")
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 import matplotlib.pyplot as plt
 from datetime import datetime
-from PyQt6.QtWidgets import QApplication, QWidget, QPushButton, QLabel, QVBoxLayout, QTabWidget, QTextEdit, QComboBox, QHBoxLayout, QSizePolicy, QFileDialog, QSpinBox, QFormLayout
+from PyQt6.QtWidgets import QApplication, QWidget, QPushButton, QLabel, QVBoxLayout, QTabWidget, QTextEdit, QComboBox, QHBoxLayout, QSizePolicy, QFileDialog, QSpinBox, QFormLayout, QGroupBox, QLineEdit
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTimer
 from PyQt6.QtGui import QPixmap
 
@@ -58,25 +58,33 @@ class FlashThread(QThread):
 class SerialReaderThread(QThread):
     data_received = pyqtSignal(str)
     graph_data_received = pyqtSignal(list)
-
+    device_info_received = pyqtSignal(str, str)  # 機体情報を受信するシグナルを追加
+  
     def __init__(self, ser):
         super().__init__()
         self.ser = ser
         self.running = True
 
     def run(self):
-        pattern = re.compile(r"^\[adc\]@([\d.,-]+)$")  # ✅ 可変長データ対応
+        pattern = re.compile(r"^\[adc\]@([\d.,-]+)$")  # 可変長データ対応
+        info_pattern = re.compile(r"^\[info\]@([A-Z]+): (.+)$")  # 機体情報を識別する正規表現を追加
+     
         while self.running:
             if self.ser and self.ser.is_open:
                 try:
                     data = self.ser.readline().decode('utf-8', errors='ignore').strip()
                     if data:
                         self.data_received.emit(f"[{self.timestamp()}] {data}")
-                        match = pattern.match(data)
-                        if match:
-                            values = list(map(float, match.group(1).split(",")))  # ✅ 可変長リストを作成
+                        match_adc = pattern.match(data)
+                        if match_adc:
+                            values = list(map(float, match_adc.group(1).split(",")))  # 可変長リストを作成
                             self.graph_data_received.emit(values)
 
+                        match_info = info_pattern.match(data)
+                        if match_info:
+                            key, value = match_info.groups()
+                            self.device_info_received.emit(key, value)  # 機体情報のシグナルを発火
+       
                 except Exception as e:
                     self.data_received.emit(f"[{self.timestamp()}] Error: {e}")
 
@@ -87,12 +95,49 @@ class SerialReaderThread(QThread):
     def timestamp(self):
         return datetime.now().strftime("%Y/%m/%d %H:%M:%S.%f")[:-3]
 
+class DeviceInfoWidget(QWidget):
+    def __init__(self):
+        super().__init__()
+        
+        self.info_fields = {
+            "NAME": QLineEdit(),
+            "VERSION": QLineEdit(),
+            "SERIAL": QLineEdit()
+        }
+        
+        for field in self.info_fields.values():
+            field.setDisabled(True)  # 初期状態では編集不可
+            field.setFixedWidth(200) # フォームの幅を固定
+     
+        self.info_box = QGroupBox("機体情報")
+        box_layout = QFormLayout()
+        
+        for key, field in self.info_fields.items():
+            box_layout.addRow(f"{key}:", field)
+        
+        self.info_box.setLayout(box_layout)
+        
+        # 送信ボタンを追加（将来機能拡張用）
+        self.send_button = QPushButton("情報リクエスト")
+        self.send_button.setEnabled(False)  # 初期状態は無効
+        
+        main_layout = QVBoxLayout()
+        main_layout.addWidget(self.info_box)
+        main_layout.addWidget(self.send_button, alignment=Qt.AlignmentFlag.AlignRight)
+        
+        self.setLayout(main_layout)
+
+    def update_info(self, key, value):
+        if key in self.info_fields:
+            self.info_fields[key].setText(value)
+            self.send_button.setEnabled(True)  # 情報取得後にボタンを有効化
+
 
 class GraphWidget(QWidget):
     def __init__(self):
         super().__init__()
 
-        self.data = []  # ✅ データ数を可変にするため空リストに
+        self.data = []  # データ数を可変にするため空リストに
         self.times = []
         self.max_points = 500  # 最大保持データ数
 
@@ -102,7 +147,7 @@ class GraphWidget(QWidget):
         self.fig, self.ax = plt.subplots()
         self.canvas = FigureCanvas(self.fig)
 
-        # ✅ Y軸調整スピンボックス（間隔を統一）
+        # Y軸調整スピンボックス（間隔を統一）
         self.y_min_spinbox = QSpinBox()
         self.y_min_spinbox.setRange(-99999, 99999)
         self.y_min_spinbox.setValue(self.y_min)
@@ -137,13 +182,13 @@ class GraphWidget(QWidget):
     def add_data(self, values):
         """ 可変長データを受け取り、グラフに追加 """
         if not self.data or len(self.data) != len(values):
-            self.data = [[] for _ in range(len(values))]  # ✅ データ数に応じてリストを作成
+            self.data = [[] for _ in range(len(values))]  # データ数に応じてリストを作成
 
         self.times.append(datetime.now().strftime("%H:%M:%S"))
         for i, val in enumerate(values):
             self.data[i].append(val)
 
-        # ✅ 移動窓方式：データが max_points を超えたら古いデータを削除
+        # 移動窓方式：データが max_points を超えたら古いデータを削除
         if len(self.times) > self.max_points:
             self.times.pop(0)
             for d in self.data:
@@ -172,7 +217,7 @@ class GraphWidget(QWidget):
         labels = [f"Value {i+1}" for i in range(len(self.data))]
 
         for i in range(len(self.data)):
-            color = colors[i % len(colors)]  # ✅ 色を繰り返し使用
+            color = colors[i % len(colors)]  # 色を繰り返し使用
             self.ax.plot(x_data[-self.max_points:], self.data[i][-self.max_points:], label=labels[i], color=color)
 
         self.ax.set_title("ADC Values Over Time")
@@ -186,7 +231,7 @@ class GraphWidget(QWidget):
 
 class STM32Flasher(QWidget):
     def __init__(self):
-        super().__init__()
+        super().__init__()        
 
         self.config = configparser.ConfigParser()
         self.config.read(CONFIG_FILE)
@@ -229,10 +274,12 @@ class STM32Flasher(QWidget):
         self.log_area.setReadOnly(True)
 
         self.graph_widget = GraphWidget()
+        self.device_info_widget = DeviceInfoWidget()  # 機体情報ウィジェットを追加
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self.log_area, "シリアルログ")
         self.tabs.addTab(self.graph_widget, "グラフ")
+        self.tabs.addTab(self.device_info_widget, "機体情報")  # 機体情報タブを追加
 
         self.clear_log_btn = QPushButton('ログクリア')
         self.clear_log_btn.clicked.connect(self.clear_log)
@@ -267,12 +314,13 @@ class STM32Flasher(QWidget):
             self.connect_btn.setText('切断')
             self.status_label.setPixmap(self.green_icon)
 
-            # ✅ 接続メッセージを赤字で表示
+            # 接続メッセージを赤字で表示
             self.log_system(f"{port} に接続しました")
 
             self.reader_thread = SerialReaderThread(self.ser)
             self.reader_thread.data_received.connect(self.log)
-            self.reader_thread.graph_data_received.connect(self.graph_widget.add_data)  # ✅ 追加
+            self.reader_thread.graph_data_received.connect(self.graph_widget.add_data)
+            self.reader_thread.device_info_received.connect(self.device_info_widget.update_info)
             self.reader_thread.start()
         except Exception as e:
             self.log_system(f"接続エラー: {e}")
@@ -280,7 +328,7 @@ class STM32Flasher(QWidget):
     def disconnect_serial(self):
         if self.reader_thread:
             self.reader_thread.stop()
-            self.reader_thread.wait()  # ✅ スレッドが確実に終了するのを待つ
+            self.reader_thread.wait()  # スレッドが確実に終了するのを待つ
             self.reader_thread = None
 
         if self.ser and self.ser.is_open:
@@ -290,7 +338,7 @@ class STM32Flasher(QWidget):
         self.connect_btn.setText('接続')
         self.status_label.setPixmap(self.red_icon)
 
-        # ✅ 切断メッセージを赤字で表示
+        # 切断メッセージを赤字で表示
         self.log_system("シリアル接続を切断しました")
 
     def select_file(self):
