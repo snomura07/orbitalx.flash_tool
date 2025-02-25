@@ -59,7 +59,7 @@ class SerialReaderThread(QThread):
     data_received = pyqtSignal(str)
     graph_data_received = pyqtSignal(list)
     device_info_received = pyqtSignal(str, str)  # 機体情報を受信するシグナルを追加
-  
+
     def __init__(self, ser):
         super().__init__()
         self.ser = ser
@@ -67,8 +67,8 @@ class SerialReaderThread(QThread):
 
     def run(self):
         pattern = re.compile(r"^\[adc\]@([\d.,-]+)$")  # 可変長データ対応
-        info_pattern = re.compile(r"^\[info\]@([A-Z]+): (.+)$")  # 機体情報を識別する正規表現を追加
-     
+        info_pattern = re.compile(r"^\[info\]@([A-Za-z0-9_]+)\s*:\s*(.+)$")  # 機体情報を識別する正規表現を追加
+
         while self.running:
             if self.ser and self.ser.is_open:
                 try:
@@ -84,7 +84,7 @@ class SerialReaderThread(QThread):
                         if match_info:
                             key, value = match_info.groups()
                             self.device_info_received.emit(key, value)  # 機体情報のシグナルを発火
-       
+
                 except Exception as e:
                     self.data_received.emit(f"[{self.timestamp()}] Error: {e}")
 
@@ -98,33 +98,32 @@ class SerialReaderThread(QThread):
 class DeviceInfoWidget(QWidget):
     def __init__(self):
         super().__init__()
-        
+
         self.info_fields = {
             "NAME": QLineEdit(),
-            "VERSION": QLineEdit(),
-            "SERIAL": QLineEdit()
+            "VERSION": QLineEdit()
         }
-        
+
         for field in self.info_fields.values():
             field.setDisabled(True)  # 初期状態では編集不可
             field.setFixedWidth(200) # フォームの幅を固定
-     
+
         self.info_box = QGroupBox("機体情報")
         box_layout = QFormLayout()
-        
+
         for key, field in self.info_fields.items():
             box_layout.addRow(f"{key}:", field)
-        
+
         self.info_box.setLayout(box_layout)
-        
+
         # 送信ボタンを追加（将来機能拡張用）
         self.send_button = QPushButton("情報リクエスト")
         self.send_button.setEnabled(False)  # 初期状態は無効
-        
+
         main_layout = QVBoxLayout()
         main_layout.addWidget(self.info_box)
         main_layout.addWidget(self.send_button, alignment=Qt.AlignmentFlag.AlignRight)
-        
+
         self.setLayout(main_layout)
 
     def update_info(self, key, value):
@@ -231,7 +230,7 @@ class GraphWidget(QWidget):
 
 class STM32Flasher(QWidget):
     def __init__(self):
-        super().__init__()        
+        super().__init__()
 
         self.config = configparser.ConfigParser()
         self.config.read(CONFIG_FILE)
@@ -357,6 +356,8 @@ class STM32Flasher(QWidget):
             color = "red"
         elif "complete" in message:
             color = "blue"
+        elif "[info]@" in message:
+            return
         else:
             color = "black"
         self.log_area.append(f'<span style="color: {color};">{message}</span>')
