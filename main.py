@@ -57,7 +57,7 @@ class FlashThread(QThread):
 
 class SerialReaderThread(QThread):
     data_received = pyqtSignal(str)
-    graph_data_received = pyqtSignal(list)
+    graph_data_received = pyqtSignal(dict)
     device_info_received = pyqtSignal(str, str)  # 機体情報を受信するシグナルを追加
 
     def __init__(self, ser):
@@ -66,7 +66,7 @@ class SerialReaderThread(QThread):
         self.running = True
 
     def run(self):
-        pattern = re.compile(r"^\[adc\]@([\d.,-]+)$")  # 可変長データ対応
+        pattern = re.compile(r"^\[adc\]@((?:[A-Za-z0-9_]+:[-\d.]+,?\s*)+)$")  # 可変長データ対応
         info_pattern = re.compile(r"^\[info\]@([A-Za-z0-9_]+)\s*:\s*(.+)$")  # 機体情報を識別する正規表現を追加
 
         while self.running:
@@ -77,7 +77,13 @@ class SerialReaderThread(QThread):
                         self.data_received.emit(f"[{self.timestamp()}] {data}")
                         match_adc = pattern.match(data)
                         if match_adc:
-                            values = list(map(float, match_adc.group(1).split(",")))  # 可変長リストを作成
+                            values_str = match_adc.group(1)
+                            values = {}
+                            for pair in values_str.split(','):
+                                pair = pair.strip()
+                                if ':' in pair:
+                                    label, val = pair.split(':')
+                                    values[label.strip()] = float(val)
                             self.graph_data_received.emit(values)
 
                         match_info = info_pattern.match(data)
@@ -136,7 +142,7 @@ class GraphWidget(QWidget):
     def __init__(self):
         super().__init__()
 
-        self.data = []  # データ数を可変にするため空リストに
+        self.data = {}  # データ数を可変にするため空リストに
         self.times = []
         self.max_points = 500  # 最大保持データ数
 
@@ -180,18 +186,21 @@ class GraphWidget(QWidget):
 
     def add_data(self, values):
         """ 可変長データを受け取り、グラフに追加 """
-        if not self.data or len(self.data) != len(values):
-            self.data = [[] for _ in range(len(values))]  # データ数に応じてリストを作成
+        for key in values.keys():
+            if key not in self.data:
+                self.data[key] = []  # 新しいラベルが追加された場合に初期化
 
         self.times.append(datetime.now().strftime("%H:%M:%S"))
-        for i, val in enumerate(values):
-            self.data[i].append(val)
+        for key, val in values.items():
+            if key not in self.data:
+                self.data[key] = []
+            self.data[key].append(val)
 
         # 移動窓方式：データが max_points を超えたら古いデータを削除
         if len(self.times) > self.max_points:
             self.times.pop(0)
-            for d in self.data:
-                d.pop(0)
+            for key in self.data.keys():
+                self.data[key].pop(0)
 
     def update_plot(self):
         """ グラフの描画を更新 """
@@ -213,11 +222,9 @@ class GraphWidget(QWidget):
         self.ax.set_xticklabels(self.times[::tick_step], rotation=45, ha="right")
 
         colors = ["red", "blue", "green", "purple", "orange", "cyan", "magenta", "yellow"]
-        labels = [f"Value {i+1}" for i in range(len(self.data))]
-
-        for i in range(len(self.data)):
-            color = colors[i % len(colors)]  # 色を繰り返し使用
-            self.ax.plot(x_data[-self.max_points:], self.data[i][-self.max_points:], label=labels[i], color=color)
+        for i, (label, values) in enumerate(self.data.items()):
+            color = colors[i % len(colors)]
+            self.ax.plot(x_data[-self.max_points:], values[-self.max_points:], label=label, color=color)
 
         self.ax.set_title("ADC Values Over Time")
         self.ax.set_xlabel("Time")
