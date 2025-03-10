@@ -104,40 +104,58 @@ class SerialReaderThread(QThread):
 class DeviceInfoWidget(QWidget):
     def __init__(self):
         super().__init__()
-
-        self.info_fields = {
-            "NAME": QLineEdit(),
-            "VERSION": QLineEdit()
-        }
-
-        for field in self.info_fields.values():
-            field.setDisabled(True)  # 初期状態では編集不可
-            field.setFixedWidth(200) # フォームの幅を固定
-
+        self.info_fields = {}  # 受信パラメータを保持
         self.info_box = QGroupBox("機体情報")
-        box_layout = QFormLayout()
+        self.box_layout = QFormLayout()
+        self.info_box.setLayout(self.box_layout)
 
-        for key, field in self.info_fields.items():
-            box_layout.addRow(f"{key}:", field)
+        # 機体への接続ボタン
+        self.debug_button = QPushButton("OrbitalXに接続")
+        self.debug_button.setEnabled(True)
+        self.debug_button.clicked.connect(self.start_debug_mode)
 
-        self.info_box.setLayout(box_layout)
-
-        # 送信ボタンを追加（将来機能拡張用）
-        self.send_button = QPushButton("情報リクエスト")
-        self.send_button.setEnabled(False)  # 初期状態は無効
+        # パラメータ送信ボタン
+        self.send_button = QPushButton("パラメータを送信")
+        self.send_button.setEnabled(False)
+        self.send_button.clicked.connect(self.send_parameters)
 
         main_layout = QVBoxLayout()
         main_layout.addWidget(self.info_box)
+        main_layout.addWidget(self.debug_button, alignment=Qt.AlignmentFlag.AlignRight)
         main_layout.addWidget(self.send_button, alignment=Qt.AlignmentFlag.AlignRight)
-
         self.setLayout(main_layout)
 
-    def update_info(self, key, value):
-        if key in self.info_fields:
-            self.info_fields[key].setText(value)
-            self.send_button.setEnabled(True)  # 情報取得後にボタンを有効化
+    def start_debug_mode(self):
+        """ 機体（OrbitalX）をデバッグモードにする """
+        if self.parent().ser:
+            self.parent().ser.write(b"[debug]@\n")  # デバッグモード開始コマンドを送信
 
+    def update_info(self, param_str):
+        """ 機体から送られた [info]@パラメータ をUIに反映 """
+        self.clear_fields()
+        params = param_str.split(",")  # 例: "SPEED:100,GAIN:1.5"
+        for param in params:
+            key, value = param.split(":")
+            field = QLineEdit(value.strip())  # 編集可能なテキストボックスを作成
+            self.info_fields[key.strip()] = field
+            self.box_layout.addRow(f"{key.strip()}:", field)
+        self.send_button.setEnabled(True)  # パラメータ受信後、送信ボタンを有効化
 
+    def send_parameters(self):
+        """ ツール上で編集したパラメータを機体へ送信 """
+        if self.parent().ser:
+            param_str = ",".join([f"{key}:{field.text()}" for key, field in self.info_fields.items()])
+            command = f"[param]@{param_str}\\n"
+            self.parent().ser.write(command.encode())  # 機体へ送信
+
+    def clear_fields(self):
+        """ 既存のパラメータ入力欄を削除 """
+        while self.box_layout.count():
+            item = self.box_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self.info_fields.clear()
+        
 class GraphWidget(QWidget):
     def __init__(self):
         super().__init__()
