@@ -102,8 +102,10 @@ class SerialReaderThread(QThread):
         return datetime.now().strftime("%Y/%m/%d %H:%M:%S.%f")[:-3]
 
 class DeviceInfoWidget(QWidget):
-    def __init__(self):
+    def __init__(self, main_window):
         super().__init__()
+        self.main_window = main_window  # 親ウィンドウ（STM32Flasher）を保持
+
         self.info_fields = {}  # 受信パラメータを保持
         self.info_box = QGroupBox("機体情報")
         self.box_layout = QFormLayout()
@@ -111,7 +113,6 @@ class DeviceInfoWidget(QWidget):
 
         # 機体への接続ボタン
         self.debug_button = QPushButton("OrbitalXに接続")
-        self.debug_button.setEnabled(True)
         self.debug_button.clicked.connect(self.start_debug_mode)
 
         # パラメータ送信ボタン
@@ -126,36 +127,17 @@ class DeviceInfoWidget(QWidget):
         self.setLayout(main_layout)
 
     def start_debug_mode(self):
-        """ 機体（OrbitalX）をデバッグモードにする """
-        if self.parent().ser:
-            self.parent().ser.write(b"[debug]@\n")  # デバッグモード開始コマンドを送信
-
-    def update_info(self, param_str):
-        """ 機体から送られた [info]@パラメータ をUIに反映 """
-        self.clear_fields()
-        params = param_str.split(",")  # 例: "SPEED:100,GAIN:1.5"
-        for param in params:
-            key, value = param.split(":")
-            field = QLineEdit(value.strip())  # 編集可能なテキストボックスを作成
-            self.info_fields[key.strip()] = field
-            self.box_layout.addRow(f"{key.strip()}:", field)
-        self.send_button.setEnabled(True)  # パラメータ受信後、送信ボタンを有効化
+        """ 機体をデバッグモードにする """
+        if self.main_window.ser:  # `self.parent()` の代わりに `self.main_window` を使う
+            self.main_window.ser.write(b"[debug]@\n")
 
     def send_parameters(self):
         """ ツール上で編集したパラメータを機体へ送信 """
-        if self.parent().ser:
+        if self.main_window.ser:
             param_str = ",".join([f"{key}:{field.text()}" for key, field in self.info_fields.items()])
             command = f"[param]@{param_str}\\n"
-            self.parent().ser.write(command.encode())  # 機体へ送信
+            self.main_window.ser.write(command.encode())
 
-    def clear_fields(self):
-        """ 既存のパラメータ入力欄を削除 """
-        while self.box_layout.count():
-            item = self.box_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        self.info_fields.clear()
-        
 class GraphWidget(QWidget):
     def __init__(self):
         super().__init__()
@@ -298,7 +280,7 @@ class STM32Flasher(QWidget):
         self.log_area.setReadOnly(True)
 
         self.graph_widget = GraphWidget()
-        self.device_info_widget = DeviceInfoWidget()  # 機体情報ウィジェットを追加
+        self.device_info_widget = DeviceInfoWidget(self)  # 機体情報ウィジェットを追加
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self.log_area, "シリアルログ")
