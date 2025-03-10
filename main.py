@@ -128,7 +128,7 @@ class DeviceInfoWidget(QWidget):
 
     def start_debug_mode(self):
         """ 機体をデバッグモードにする """
-        if self.main_window.ser:  # `self.parent()` の代わりに `self.main_window` を使う
+        if self.main_window.ser:
             self.main_window.ser.write(b"[debug]@\n")
 
     def send_parameters(self):
@@ -137,6 +137,25 @@ class DeviceInfoWidget(QWidget):
             param_str = ",".join([f"{key}:{field.text()}" for key, field in self.info_fields.items()])
             command = f"[param]@{param_str}\\n"
             self.main_window.ser.write(command.encode())
+
+    def update_info(self, param_str):
+        """ 機体から送られた [info]@パラメータ をUIに反映 """
+        self.clear_fields()
+        params = param_str.split(",")  # 例: "SPEED:100,GAIN:1.5"
+        for param in params:
+            key, value = param.split(":")
+            field = QLineEdit(value.strip())  # 編集可能なテキストボックスを作成
+            self.info_fields[key.strip()] = field
+            self.box_layout.addRow(f"{key.strip()}:", field)
+        self.send_button.setEnabled(True)  # パラメータ受信後、送信ボタンを有効化
+
+    def clear_fields(self):
+        """ 既存のパラメータ入力欄を削除 """
+        while self.box_layout.count():
+            item = self.box_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self.info_fields.clear()
 
 class GraphWidget(QWidget):
     def __init__(self):
