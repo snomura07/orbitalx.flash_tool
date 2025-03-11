@@ -130,6 +130,7 @@ class DeviceInfoWidget(QWidget):
         """ 機体をデバッグモードにする """
         if self.main_window.ser:
             self.main_window.ser.write(b"[debug]@\n")
+            print(b"[debug]@\n")
 
     def send_parameters(self):
         """ ツール上で編集したパラメータを機体へ送信 """
