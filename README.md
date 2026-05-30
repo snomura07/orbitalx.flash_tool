@@ -7,10 +7,10 @@ COMポートがバインドできない都合で、powershell上から実行す�
 
 ### python tools
 ```
-pip3 install --no-cache-dir PyQt6==6.7.0
-pip3 install pyinstaller
-pip3 install pyserial
-pip3 install matplotlib
+apt install python3-pip python3-venv
+python3 -m venv venv
+source venv/bin/activate
+pip3 install --no-cache-dir -r requirements.txt
 ```
 
 ## STM32

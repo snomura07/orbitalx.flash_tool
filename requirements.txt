@@ -1,0 +1,4 @@
+PyQt6==6.7.0
+pyinstaller
+pyserial
+matplotlib
