@@ -35,6 +35,12 @@ pip3 install --no-cache-dir -r requirements.txt
     処理本体。python3で起動。
     config.iniで、COMの初期値とelfのパスを設定できる。
 
+### script/
+    - `source script/activate_venv.sh`
+        venv を現在のシェルで有効化する
+    - `bash script/run_main.sh`
+        venv 配下の Python で `main.py` を起動する
+
 ### ビルド
     - pyinstaller --onefile --windowed --distpath . main.py
     - カレント配下にexeが作成される。iniの指定が面倒なので、iniと同階層に作成する方針。
